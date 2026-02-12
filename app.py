@@ -95,7 +95,7 @@ with tab1:
             
             # E. Map (Updated to remove warning)
             m = folium.Map(location=[pois.geometry.y.iloc[0], pois.geometry.x.iloc[0]], 
-                           zoom_start=14, tiles="cartodbpositron")
+                           zoom_start=14, tiles="OpenStreetMap")
             
             heat_data = [[G.nodes[node]['y'], G.nodes[node]['x'], max(0, 15 - time)] 
                          for node, time in distances.items() if time <= 20]
