@@ -6,3 +6,4 @@ cache/
 echo "cache/" >> .gitignore
 echo "__pycache__/" >> .gitignore
 echo ".DS_Store" >> .gitignore
+.streamlit/secrets.toml

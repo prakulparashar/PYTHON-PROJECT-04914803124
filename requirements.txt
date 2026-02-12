@@ -5,3 +5,4 @@ streamlit
 folium
 streamlit-folium
 matplotlib
+groq

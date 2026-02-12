@@ -6,13 +6,38 @@ import osmnx as ox
 import networkx as nx
 import pandas as pd
 from src.audit_engine import get_city_network, get_pois
-import os
-from dotenv import load_dotenv
+from groq import Groq
+
+
 
 
 # 1. Page Configuration
 st.set_page_config(page_title="Delhi 15-Min Audit", layout="wide")
 st.title("🏙️ Delhi 15-Minute City Dashboard")
+
+
+client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+
+def get_ai_insight(dist, amen, avg_t, access_p):
+    """Sends a summarized audit report to Groq for professional review."""
+    prompt = f"""
+    You are an expert Urban Planner. Analyze this 15-minute city audit for {dist}:
+    - Service: {amen}
+    - Average Walk Time: {avg_t:.1f} minutes
+    - 15-Minute Access Score: {access_p:.1f}%
+    
+    Provide a concise, 3-sentence professional evaluation. Suggest one specific 
+    improvement for Delhi's infrastructure based on these results.
+    """
+    completion = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {"role": "system", "content": "You are a senior consultant for the Delhi Development Authority."},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.5
+    )
+    return completion.choices[0].message.content
 
 # Initialize session state for comparison
 if 'comparison_data' not in st.session_state:
@@ -101,6 +126,13 @@ with tab1:
                 file_name=f'delhi_audit_{district}_{amenity}.csv',
                 mime='text/csv',
             )
+
+            # H. AI insight
+            st.divider()
+            st.subheader("🤖 AI Urban Planner Insights")
+            with st.status("Generating spatial analysis...", expanded=True):
+                ai_review = get_ai_insight(district, amenity, avg_time, percent_served)
+                st.write(ai_review)
 
             
 
