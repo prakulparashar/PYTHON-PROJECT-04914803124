@@ -107,7 +107,27 @@ with tab1:
             # Use st_folium with returned_objects=[] to emulate static behavior
             st_folium(m, width=1100, height=500, returned_objects=[])
 
-            # F. Audit Log Table (Updated 'width' to remove warning)
+
+
+            st.subheader("🚶 Walking Time Distribution")
+
+            # F. Histogram
+            # 1. Prepare data for the histogram
+            dist_values = list(distances.values())
+            dist_df = pd.DataFrame(dist_values, columns=['Minutes'])
+
+            # 2. Create bins (0-5, 5-10, 10-15, 15-20, 20+)
+            bins = [0, 5, 10, 15, 20, 100]
+            labels = ['0-5m', '5-10m', '10-15m', '15-20m', '20m+']
+            dist_df['Range'] = pd.cut(dist_df['Minutes'], bins=bins, labels=labels)
+
+            # 3. Count occurrences and plot
+            chart_data = dist_df['Range'].value_counts().reindex(labels)
+            st.bar_chart(chart_data, color="#2ecc71")
+
+            st.caption("This chart shows how many areas in the district fall within each walking time bracket.")
+
+            # G. Audit Log Table (Updated 'width' to remove warning)
             st.divider()
             st.subheader(f"📊 Audit Log: {amenity.title()} Locations in {district}")
 
@@ -118,7 +138,7 @@ with tab1:
 
             st.dataframe(display_df, width="stretch")
 
-            # G. Download Data
+            # H. Download Data
             csv = display_df.to_csv(index=False).encode('utf-8')
             st.download_button(
                 label=f"📥 Download {district} {amenity.title()} Data",
@@ -127,7 +147,7 @@ with tab1:
                 mime='text/csv',
             )
 
-            # H. AI insight
+            # I. AI insight
             st.divider()
             st.subheader("🤖 AI Urban Planner Insights")
             with st.status("Generating spatial analysis...", expanded=True):
