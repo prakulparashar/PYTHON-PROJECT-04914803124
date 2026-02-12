@@ -1,0 +1,124 @@
+import streamlit as st
+import folium
+from streamlit_folium import st_folium # Updated to remove deprecation warning
+from folium.plugins import HeatMap
+import osmnx as ox
+import networkx as nx
+import pandas as pd
+from src.audit_engine import get_city_network, get_pois
+import os
+from dotenv import load_dotenv
+
+
+# 1. Page Configuration
+st.set_page_config(page_title="Delhi 15-Min Audit", layout="wide")
+st.title("🏙️ Delhi 15-Minute City Dashboard")
+
+# Initialize session state for comparison
+if 'comparison_data' not in st.session_state:
+    st.session_state.comparison_data = []
+
+# 2. Sidebar
+st.sidebar.header("Audit Settings")
+# Expanded Delhi Districts
+delhi_districts = [
+    "Central Delhi", "Central North Delhi", "East Delhi", "New Delhi", 
+    "North Delhi", "North East Delhi", "North West Delhi", "Old Delhi", 
+    "Outer North Delhi", "South Delhi", "South East Delhi", "South West Delhi", 
+    "West Delhi"
+]
+
+district = st.sidebar.selectbox("Select Delhi District", delhi_districts)
+amenity = st.sidebar.selectbox("Essential Service", 
+                                ["hospital", "school", "supermarket", "pharmacy"])
+
+# 3. Tabs
+tab1, tab2 = st.tabs(["📍 Live Audit", "📊 Benchmarking & Comparison"])
+
+with tab1:
+    if st.sidebar.button("Run Audit"):
+        with st.spinner(f"Analyzing {district}..."):
+            # A. Fetch Data
+            full_place_name = f"{district}, Delhi, India"
+            G = get_city_network(full_place_name)
+            pois = get_pois(full_place_name, amenity)
+            
+            if pois.empty:
+                st.error(f"❌ No '{amenity}' found in {district}.")
+                st.stop() 
+            
+            # B. Math Logic
+            target_nodes = ox.distance.nearest_nodes(G, pois.geometry.x, pois.geometry.y)
+            distances = nx.multi_source_dijkstra_path_length(G, set(target_nodes), weight='time')
+            
+            # C. Calculations
+            avg_time = sum(distances.values()) / len(distances)
+            percent_served = (sum(1 for t in distances.values() if t <= 15) / len(distances)) * 100
+            
+            # Save data for Tab 2
+            st.session_state.comparison_data.append({
+                "District": district,
+                "Service": amenity.title(),
+                "Avg Walk (Min)": round(avg_time, 2),
+                "15-Min Access %": round(percent_served, 2)
+            })
+
+            # D. Display Metrics
+            col1, col2 = st.columns(2)
+            col1.metric("Avg. Walk Time", f"{avg_time:.1f} mins")
+            col2.metric("15-Min Access %", f"{percent_served:.1f}%")
+            
+            # E. Map (Updated to remove warning)
+            m = folium.Map(location=[pois.geometry.y.iloc[0], pois.geometry.x.iloc[0]], 
+                           zoom_start=14, tiles="cartodbpositron")
+            
+            heat_data = [[G.nodes[node]['y'], G.nodes[node]['x'], max(0, 15 - time)] 
+                         for node, time in distances.items() if time <= 20]
+            HeatMap(heat_data, radius=15, blur=10).add_to(m)
+            
+            for _, row in pois.iterrows():
+                folium.CircleMarker([row.geometry.y, row.geometry.x], radius=3, color='blue').add_to(m)
+            
+            # Use st_folium with returned_objects=[] to emulate static behavior
+            st_folium(m, width=1100, height=500, returned_objects=[])
+
+            # F. Audit Log Table (Updated 'width' to remove warning)
+            st.divider()
+            st.subheader(f"📊 Audit Log: {amenity.title()} Locations in {district}")
+
+            display_df = pois[['name', 'geometry']].copy()
+            display_df['Latitude'] = display_df.geometry.y
+            display_df['Longitude'] = display_df.geometry.x
+            display_df = display_df.drop(columns=['geometry']).fillna("Unnamed Location")
+
+            st.dataframe(display_df, width="stretch")
+
+            # G. Download Data
+            csv = display_df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label=f"📥 Download {district} {amenity.title()} Data",
+                data=csv,
+                file_name=f'delhi_audit_{district}_{amenity}.csv',
+                mime='text/csv',
+            )
+
+            
+
+with tab2:
+    st.header("Comparative Analysis")
+    if st.session_state.comparison_data:
+        df_comp = pd.DataFrame(st.session_state.comparison_data).drop_duplicates()
+        st.subheader("Performance Scorecard")
+        styled_df = df_comp.style.highlight_max(axis=0, subset=['15-Min Access %'], color='#90ee90') \
+                                .background_gradient(cmap='RdYlGn', subset=['15-Min Access %'], vmin=0, vmax=100) \
+                                .format(precision=2)
+        st.table(styled_df)
+        
+        st.subheader("Visual Benchmarking")
+        st.bar_chart(df_comp.set_index('District')['15-Min Access %'])
+        
+        if st.button("Reset Comparison Chart"):
+            st.session_state.comparison_data = []
+            st.rerun()
+    else:
+        st.info("Run an audit in Tab 1 to see data here.")

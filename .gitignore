@@ -1,4 +1,8 @@
 .env
 __pycache__/
 .streamlit/
-*.csv
+cache/
+.DS_Store
+echo "cache/" >> .gitignore
+echo "__pycache__/" >> .gitignore
+echo ".DS_Store" >> .gitignore

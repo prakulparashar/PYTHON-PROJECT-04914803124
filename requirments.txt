@@ -1,7 +1,0 @@
-osmnx
-networkx
-geopandas
-streamlit
-folium
-streamlit-folium
-matplotlib
