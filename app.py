@@ -15,6 +15,15 @@ from groq import Groq
 st.set_page_config(page_title="Delhi 15-Min Audit", layout="wide")
 st.title("🏙️ Delhi 15-Minute City Dashboard")
 
+# Session State
+if "messages" not in st.session_state:
+    st.session_state.messages = [
+        {"role": "system", "content": "You are a Delhi urban planning expert."}
+    ]
+
+if 'comparison_data' not in st.session_state:
+    st.session_state.comparison_data = []
+
 
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
