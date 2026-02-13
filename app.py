@@ -58,7 +58,7 @@ amenity = st.sidebar.selectbox("Essential Service",
                                 ["hospital", "school", "supermarket", "pharmacy"])
 
 # 3. Tabs
-tab1, tab2 = st.tabs(["📍 Live Audit", "📊 Benchmarking & Comparison"])
+tab1, tab2, tab3 = st.tabs(["📍 Live Audit", "📊 Benchmarking", "💬 Urban Planning Chat"])
 
 with tab1:
     if st.sidebar.button("Run Audit"):
@@ -174,3 +174,33 @@ with tab2:
             st.rerun()
     else:
         st.info("Run an audit in Tab 1 to see data here.")
+
+
+
+with tab3:
+    st.header("💬 Urban Planning Assistant")
+    st.info("Ask me about service gaps, infrastructure suggestions, or specific district comparisons.")
+
+    # Display chat history
+    for message in st.session_state.messages:
+        if message["role"] != "system":
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+
+    # Chat input
+    if prompt := st.chat_input("How can we improve walking access in Delhi?"):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        with st.chat_message("assistant"):
+            # We pass the entire message history to maintain context
+            response_container = st.empty()
+            stream = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=st.session_state.messages,
+                stream=True
+            )
+            full_response = st.write_stream(stream)
+        
+        st.session_state.messages.append({"role": "assistant", "content": full_response})
