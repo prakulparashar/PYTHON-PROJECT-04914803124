@@ -85,7 +85,6 @@ with tab1:
         with st.spinner(f"Analyzing {district}..."):
             full_place_name = f"{district}, Delhi, India"
 
-            # cache_resource means G is returned by reference - no pickle on rerun
             G = cached_network(full_place_name)
             pois = cached_pois(full_place_name, amenity)
 
@@ -108,8 +107,7 @@ with tab1:
             display_df["Longitude"] = display_df.geometry.x
             display_df = display_df.drop(columns=["geometry"]).fillna("Unnamed Location")
 
-            # Pre-compute and subsample heatmap data to max 2000 points.
-            # This is the single biggest lag fix - cuts map transfer by ~95%.
+            # Pre-compute and subsample heatmap data to max 2000 points
             heatmap_data = [
                 [G.nodes[n]["y"], G.nodes[n]["x"], max(0, 15 - t)]
                 for n, t in distances.items()
@@ -118,12 +116,19 @@ with tab1:
             if len(heatmap_data) > 2000:
                 heatmap_data = random.sample(heatmap_data, 2000)
 
-            # Pre-bin walk times into a histogram - avoids sending 50k raw rows to browser
+            # Pre-bin walk times into a histogram
             vals = list(distances.values())
             counts, bins = np.histogram(vals, bins=30, range=(0, 30))
             hist_df = pd.DataFrame({"Minutes": bins[:-1].round(1), "Nodes": counts})
 
             map_center = [pois.geometry.y.iloc[0], pois.geometry.x.iloc[0]]
+
+            # Extract POI coordinates as plain Python lists (lightweight, no GeoDataFrame)
+            poi_coords = list(zip(
+                pois.geometry.y.tolist(),
+                pois.geometry.x.tolist(),
+                pois["name"].fillna("Unnamed Location").tolist(),
+            ))
 
             audit_summary = (
                 f"{district} {amenity}: Avg walk {avg_time:.1f}m, "
@@ -134,8 +139,7 @@ with tab1:
                 "content": f"You are a Delhi expert. Context: {audit_summary}",
             }
 
-            # Store ONLY lightweight display-ready data - G and pois stay in the cache.
-            # Keeping large objects out of session_state prevents costly pickle on every rerun.
+            # Store ONLY lightweight display-ready data - G and pois stay in the cache
             st.session_state.audit_results = {
                 "avg_time": avg_time,
                 "percent_served": percent_served,
@@ -143,6 +147,7 @@ with tab1:
                 "heatmap_data": heatmap_data,
                 "hist_df": hist_df,
                 "map_center": map_center,
+                "poi_coords": poi_coords,
                 "district": district,
                 "amenity": amenity,
             }
@@ -154,8 +159,7 @@ with tab1:
                 "15-Min Access %": round(percent_served, 2),
             })
 
-    # FIX 1: Guard against stale session state from before the map_center key existed.
-    # Any audit_results dict missing this key is from an old schema - reset it.
+    # Guard against stale session state missing newer keys
     if (
         st.session_state.audit_results is not None
         and "map_center" not in st.session_state.audit_results
@@ -178,16 +182,27 @@ with tab1:
                 )
                 st.info(insight)
 
-        # Heatmap with pre-subsampled data; returned_objects=[] stops ping-pong transfer
+        # Build map: heatmap layer + blue dot for each amenity location
         m = folium.Map(location=res["map_center"], zoom_start=14)
         HeatMap(res["heatmap_data"]).add_to(m)
+
+        for lat, lon, name in res["poi_coords"]:
+            folium.CircleMarker(
+                location=[lat, lon],
+                radius=6,
+                color="#1565C0",       # dark blue border
+                fill=True,
+                fill_color="#1E88E5",  # bright blue fill
+                fill_opacity=0.85,
+                weight=1.5,
+                tooltip=name,
+            ).add_to(m)
+
         st_folium(m, width=1100, height=500, returned_objects=[], key="audit_map")
 
-        # Histogram chart - pre-binned, never raw node distances
         st.subheader("Walk Time Distribution")
         st.bar_chart(res["hist_df"].set_index("Minutes"), color="#2ecc71")
 
-        # FIX 3: use_container_width deprecated - replaced with width='stretch'
         st.dataframe(res["display_df"], width="stretch")
     else:
         st.info("Run an Audit from the sidebar to see spatial data.")
@@ -216,9 +231,6 @@ with tab3:
                 messages=st.session_state.messages,
                 stream=True,
             )
-            # FIX 2: Manually collect stream chunks into a plain string.
-            # st.write_stream() can return a non-string object - storing that in
-            # messages causes Groq to throw a 400 BadRequestError on the next turn.
             full_response = ""
             placeholder = st.empty()
             for chunk in stream:
