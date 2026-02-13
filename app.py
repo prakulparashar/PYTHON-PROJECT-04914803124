@@ -16,10 +16,14 @@ st.set_page_config(page_title="Delhi 15-Min Audit", layout="wide")
 st.title("🏙️ Delhi 15-Minute City Dashboard")
 
 # Session State
+
 if "messages" not in st.session_state:
     st.session_state.messages = [
         {"role": "system", "content": "You are a Delhi urban planning expert."}
     ]
+
+if 'audit_results' not in st.session_state:
+    st.session_state.audit_results = None
 
 if 'comparison_data' not in st.session_state:
     st.session_state.comparison_data = []
@@ -66,10 +70,15 @@ district = st.sidebar.selectbox("Select Delhi District", delhi_districts)
 amenity = st.sidebar.selectbox("Essential Service", 
                                 ["hospital", "school", "supermarket", "pharmacy"])
 
+if st.sidebar.button("Clear Chat Memory"):
+    st.session_state.messages = [{"role": "system", "content": "You are a Delhi urban planning expert."}]
+    st.sidebar.success("Chat history cleared!")
+
 # 3. Tabs
 tab1, tab2, tab3 = st.tabs(["📍 Live Audit", "📊 Benchmarking", "💬 Urban Planning Chat"])
 
 with tab1:
+    # 1. THE ACTION: When the button is clicked, we calculate and save to state
     if st.sidebar.button("Run Audit"):
         with st.spinner(f"Analyzing {district}..."):
             # A. Fetch Data
@@ -78,90 +87,73 @@ with tab1:
             pois = get_pois(full_place_name, amenity)
             
             if pois.empty:
-                st.error(f"❌ No '{amenity}' found in {district}.")
+                st.error(f"❌ No '{amenity}' found.")
                 st.stop() 
             
-            # B. Math Logic
+            # B. Math & Calculations
             target_nodes = ox.distance.nearest_nodes(G, pois.geometry.x, pois.geometry.y)
             distances = nx.multi_source_dijkstra_path_length(G, set(target_nodes), weight='time')
-            
-            # C. Calculations
             avg_time = sum(distances.values()) / len(distances)
             percent_served = (sum(1 for t in distances.values() if t <= 15) / len(distances)) * 100
-            
-            # Save data for Tab 2
-            st.session_state.comparison_data.append({
-                "District": district,
-                "Service": amenity.title(),
-                "Avg Walk (Min)": round(avg_time, 2),
-                "15-Min Access %": round(percent_served, 2)
-            })
 
-            # D. Display Metrics
-            col1, col2 = st.columns(2)
-            col1.metric("Avg. Walk Time", f"{avg_time:.1f} mins")
-            col2.metric("15-Min Access %", f"{percent_served:.1f}%")
-            
-            # E. Map (Updated to remove warning)
-            m = folium.Map(location=[pois.geometry.y.iloc[0], pois.geometry.x.iloc[0]], 
-                           zoom_start=14, tiles="OpenStreetMap")
-            
-            heat_data = [[G.nodes[node]['y'], G.nodes[node]['x'], max(0, 15 - time)] 
-                         for node, time in distances.items() if time <= 20]
-            HeatMap(heat_data, radius=15, blur=10).add_to(m)
-            
-            for _, row in pois.iterrows():
-                folium.CircleMarker([row.geometry.y, row.geometry.x], radius=3, color='blue').add_to(m)
-            
-            # Use st_folium with returned_objects=[] to emulate static behavior
-            st_folium(m, width=1100, height=500, returned_objects=[])
-
-
-
-            st.subheader("🚶 Walking Time Distribution")
-
-            # F. Histogram
-            # 1. Prepare data for the histogram
-            dist_values = list(distances.values())
-            dist_df = pd.DataFrame(dist_values, columns=['Minutes'])
-
-            # 2. Create bins (0-5, 5-10, 10-15, 15-20, 20+)
-            bins = [0, 5, 10, 15, 20, 100]
-            labels = ['0-5m', '5-10m', '10-15m', '15-20m', '20m+']
-            dist_df['Range'] = pd.cut(dist_df['Minutes'], bins=bins, labels=labels)
-
-            # 3. Count occurrences and plot
-            chart_data = dist_df['Range'].value_counts().reindex(labels)
-            st.bar_chart(chart_data, color="#2ecc71")
-
-            st.caption("This chart shows how many areas in the district fall within each walking time bracket.")
-
-            # G. Audit Log Table (Updated 'width' to remove warning)
-            st.divider()
-            st.subheader(f"📊 Audit Log: {amenity.title()} Locations in {district}")
-
+            # C. Prepare Dataframe 
             display_df = pois[['name', 'geometry']].copy()
             display_df['Latitude'] = display_df.geometry.y
             display_df['Longitude'] = display_df.geometry.x
             display_df = display_df.drop(columns=['geometry']).fillna("Unnamed Location")
 
-            st.dataframe(display_df, width="stretch")
+            # D. Update Chatbot Context
+            audit_summary = (f"{district} {amenity} analysis: Avg walk {avg_time:.1f}m, 15-min access {percent_served:.1f}%.")
+            st.session_state.messages[0] = {"role": "system", "content": f"You are a Delhi expert. Context: {audit_summary}"}
 
-            # H. Download Data
-            csv = display_df.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label=f"📥 Download {district} {amenity.title()} Data",
-                data=csv,
-                file_name=f'delhi_audit_{district}_{amenity}.csv',
-                mime='text/csv',
-            )
+            # E. SAVE EVERYTHING TO SESSION STATE
+            st.session_state.audit_results = {
+                "avg_time": avg_time,
+                "percent_served": percent_served,
+                "display_df": display_df,
+                "distances": distances,
+                "pois": pois,
+                "G": G,
+                "district": district,
+                "amenity": amenity
+            }
+            
+            # Save for Tab 2 Comparison
+            st.session_state.comparison_data.append({
+                "District": district, "Service": amenity.title(),
+                "Avg Walk (Min)": round(avg_time, 2), "15-Min Access %": round(percent_served, 2)
+            })
 
-            # I. AI insight
-            st.divider()
-            st.subheader("🤖 AI Urban Planner Insights")
-            with st.status("Generating spatial analysis...", expanded=True):
-                ai_review = get_ai_insight(district, amenity, avg_time, percent_served)
-                st.write(ai_review)
+    # 2. THE DISPLAY: This part runs every time the page refreshes (e.g., when switching tabs)
+    if st.session_state.audit_results:
+        res = st.session_state.audit_results
+        
+        # Display Metrics
+        col1, col2 = st.columns(2)
+        col1.metric("Avg. Walk Time", f"{res['avg_time']:.1f} mins")
+        col2.metric("15-Min Access %", f"{res['percent_served']:.1f}%")
+        
+        # Map
+        m = folium.Map(location=[res['pois'].geometry.y.iloc[0], res['pois'].geometry.x.iloc[0]], zoom_start=14)
+        HeatMap([[res['G'].nodes[n]['y'], res['G'].nodes[n]['x'], max(0, 15-t)] for n, t in res['distances'].items() if t <= 20]).add_to(m)
+        st_folium(m, width=1100, height=500, returned_objects=[])
+
+        # Histogram
+        st.subheader("🚶 Walking Time Distribution")
+        st.bar_chart(pd.DataFrame(list(res['distances'].values()), columns=['Minutes']), color="#2ecc71")
+        
+        # Log Table
+        st.subheader(f"📊 Audit Log: {res['amenity'].title()}")
+        st.dataframe(res['display_df'], width="stretch")
+        
+        # AI Insight (Calls the function using the saved results)
+        st.divider()
+        st.subheader("🤖 AI Urban Planner Insights")
+        with st.status("Reviewing results..."):
+            st.write(get_ai_insight(res['district'], res['amenity'], res['avg_time'], res['percent_served']))
+    else:
+        st.info("👈 Set your district and click 'Run Audit' in the sidebar to begin.")
+        
 
             
 
