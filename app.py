@@ -5,6 +5,8 @@ from folium.plugins import HeatMap
 import osmnx as ox
 import networkx as nx
 import pandas as pd
+import numpy as np
+import random
 from src.audit_engine import get_city_network, get_pois
 from groq import Groq
 
@@ -12,11 +14,12 @@ from groq import Groq
 st.set_page_config(page_title="Delhi 15-Min Audit", layout="wide")
 st.title("🏙️ Delhi 15-Minute City Dashboard")
 
-# --- CACHING WRAPPERS (Add these to stop the lag) ---
-@st.cache_data(show_spinner=False)
+# --- CACHING WRAPPERS ---
+@st.cache_resource(show_spinner=False)
 def cached_network(place):
     return get_city_network(place)
 
+# cache_data: 
 @st.cache_data(show_spinner=False)
 def cached_pois(place, amenity):
     return get_pois(place, amenity)
@@ -73,17 +76,18 @@ with tab1:
     if st.sidebar.button("Run Audit"):
         with st.spinner(f"Analyzing {district}..."):
             full_place_name = f"{district}, Delhi, India"
-            
-            # Use Cached Functions to prevent re-downloading data on every chat message
+
+            # Use cached functions
             G = cached_network(full_place_name)
             pois = cached_pois(full_place_name, amenity)
-            
+
             if pois.empty:
                 st.error(f"❌ No '{amenity}' found.")
-                st.stop() 
-            
+                st.stop()
+
             target_nodes = ox.distance.nearest_nodes(G, pois.geometry.x, pois.geometry.y)
             distances = nx.multi_source_dijkstra_path_length(G, set(target_nodes), weight='time')
+
             avg_time = sum(distances.values()) / len(distances)
             percent_served = (sum(1 for t in distances.values() if t <= 15) / len(distances)) * 100
 
@@ -92,34 +96,78 @@ with tab1:
             display_df['Longitude'] = display_df.geometry.x
             display_df = display_df.drop(columns=['geometry']).fillna("Unnamed Location")
 
-            audit_summary = (f"{district} {amenity}: Avg walk {avg_time:.1f}m, 15-min access {percent_served:.1f}%.")
-            st.session_state.messages[0] = {"role": "system", "content": f"You are a Delhi expert. Context: {audit_summary}"}
-
-            # Save to state
-            st.session_state.audit_results = {
-                "avg_time": avg_time, "percent_served": percent_served,
-                "display_df": display_df, "distances": distances,
-                "pois": pois, "G": G, "district": district, "amenity": amenity
-            }
             
+            heatmap_data = [
+                [G.nodes[n]['y'], G.nodes[n]['x'], max(0, 15 - t)]
+                for n, t in distances.items() if t <= 20
+            ]
+            if len(heatmap_data) > 2000:
+                heatmap_data = random.sample(heatmap_data, 2000)
+
+            # Pre-compute histogram bins so we never send raw node distances to the browser
+            vals = list(distances.values())
+            counts, bins = np.histogram(vals, bins=30, range=(0, 30))
+            hist_df = pd.DataFrame({
+                'Minutes': bins[:-1].round(1),
+                'Nodes': counts
+            })
+
+            map_center = [pois.geometry.y.iloc[0], pois.geometry.x.iloc[0]]
+
+            audit_summary = (
+                f"{district} {amenity}: Avg walk {avg_time:.1f}m, "
+                f"15-min access {percent_served:.1f}%."
+            )
+            st.session_state.messages[0] = {
+                "role": "system",
+                "content": f"You are a Delhi expert. Context: {audit_summary}"
+            }
+
+            
+            st.session_state.audit_results = {
+                "avg_time": avg_time,
+                "percent_served": percent_served,
+                "display_df": display_df,
+                "heatmap_data": heatmap_data,   # pre-computed, subsampled
+                "hist_df": hist_df,              # pre-binned histogram
+                "map_center": map_center,        # two floats only
+                "district": district,
+                "amenity": amenity,
+            }
+
             st.session_state.comparison_data.append({
-                "District": district, "Service": amenity.title(),
-                "Avg Walk (Min)": round(avg_time, 2), "15-Min Access %": round(percent_served, 2)
+                "District": district,
+                "Service": amenity.title(),
+                "Avg Walk (Min)": round(avg_time, 2),
+                "15-Min Access %": round(percent_served, 2)
             })
 
     # Display Persistent Results
     if st.session_state.audit_results:
         res = st.session_state.audit_results
+
         col1, col2 = st.columns(2)
         col1.metric("Avg. Walk Time", f"{res['avg_time']:.1f} mins")
         col2.metric("15-Min Access %", f"{res['percent_served']:.1f}%")
-        
-        # Map Optimization: returned_objects=[] stops the laggy "ping-pong" data transfer
-        m = folium.Map(location=[res['pois'].geometry.y.iloc[0], res['pois'].geometry.x.iloc[0]], zoom_start=14)
-        HeatMap([[res['G'].nodes[n]['y'], res['G'].nodes[n]['x'], max(0, 15-t)] for n, t in res['distances'].items() if t <= 20]).add_to(m)
+
+        # AI Insight button 
+        if st.button("✨ Get AI Insight"):
+            with st.spinner("Generating insight..."):
+                insight = get_ai_insight(
+                    res['district'], res['amenity'],
+                    res['avg_time'], res['percent_served']
+                )
+                st.info(insight)
+
+        # Heatmap 
+        m = folium.Map(location=res['map_center'], zoom_start=14)
+        HeatMap(res['heatmap_data']).add_to(m)
         st_folium(m, width=1100, height=500, returned_objects=[], key="audit_map")
 
-        st.bar_chart(pd.DataFrame(list(res['distances'].values()), columns=['Minutes']), color="#2ecc71")
+        # Histogram 
+        st.subheader("Walk Time Distribution")
+        st.bar_chart(res['hist_df'].set_index('Minutes'), color="#2ecc71")
+
         st.dataframe(res['display_df'], use_container_width=True)
     else:
         st.info("👈 Run an Audit to see spatial data.")
