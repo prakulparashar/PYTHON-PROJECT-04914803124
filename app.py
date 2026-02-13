@@ -12,14 +12,15 @@ from groq import Groq
 
 # 1. Page Configuration
 st.set_page_config(page_title="Delhi 15-Min Audit", layout="wide")
-st.title("🏙️ Delhi 15-Minute City Dashboard")
+st.title("Delhi 15-Minute City Dashboard")
 
 # --- CACHING WRAPPERS ---
+# cache_resource: stores the NetworkX graph as a single reference (no pickle round-trip)
 @st.cache_resource(show_spinner=False)
 def cached_network(place):
     return get_city_network(place)
 
-# cache_data: 
+# cache_data: fine for GeoDataFrames (serializes well)
 @st.cache_data(show_spinner=False)
 def cached_pois(place, amenity):
     return get_pois(place, amenity)
@@ -30,87 +31,97 @@ if "messages" not in st.session_state:
         {"role": "system", "content": "You are a Delhi urban planning expert."}
     ]
 
-if 'audit_results' not in st.session_state:
+if "audit_results" not in st.session_state:
     st.session_state.audit_results = None
 
-if 'comparison_data' not in st.session_state:
+if "comparison_data" not in st.session_state:
     st.session_state.comparison_data = []
 
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
+
 def get_ai_insight(dist, amen, avg_t, access_p):
-    prompt = f"""
-    You are an expert Urban Planner. Analyze this 15-minute city audit for {dist}:
-    - Service: {amen}
-    - Average Walk Time: {avg_t:.1f} minutes
-    - 15-Minute Access Score: {access_p:.1f}%
-    Provide a concise, 3-sentence evaluation and one specific infrastructure suggestion.
-    """
+    prompt = (
+        f"You are an expert Urban Planner. Analyze this 15-minute city audit for {dist}:\n"
+        f"- Service: {amen}\n"
+        f"- Average Walk Time: {avg_t:.1f} minutes\n"
+        f"- 15-Minute Access Score: {access_p:.1f}%\n"
+        "Provide a concise, 3-sentence evaluation and one specific infrastructure suggestion."
+    )
     completion = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[
             {"role": "system", "content": "You are a senior consultant for the DDA."},
-            {"role": "user", "content": prompt}
+            {"role": "user", "content": prompt},
         ],
-        temperature=0.5
+        temperature=0.5,
     )
     return completion.choices[0].message.content
+
 
 # 2. Sidebar
 st.sidebar.header("Audit Settings")
 delhi_districts = [
-    "Central Delhi", "East Delhi", "New Delhi", "North Delhi", "South Delhi", "West Delhi"
+    "Central Delhi", "East Delhi", "New Delhi",
+    "North Delhi", "South Delhi", "West Delhi",
 ]
 
 district = st.sidebar.selectbox("Select Delhi District", delhi_districts)
-amenity = st.sidebar.selectbox("Essential Service", ["hospital", "school", "supermarket", "pharmacy"])
+amenity = st.sidebar.selectbox(
+    "Essential Service", ["hospital", "school", "supermarket", "pharmacy"]
+)
 
 if st.sidebar.button("Clear Chat Memory"):
-    st.session_state.messages = [{"role": "system", "content": "You are a Delhi urban planning expert."}]
+    st.session_state.messages = [
+        {"role": "system", "content": "You are a Delhi urban planning expert."}
+    ]
     st.sidebar.success("Chat history cleared!")
 
 # 3. Tabs
-tab1, tab2, tab3 = st.tabs(["📍 Live Audit", "📊 Benchmarking", "💬 Urban Planning Chat"])
+tab1, tab2, tab3 = st.tabs(["Live Audit", "Benchmarking", "Urban Planning Chat"])
 
 with tab1:
     if st.sidebar.button("Run Audit"):
         with st.spinner(f"Analyzing {district}..."):
             full_place_name = f"{district}, Delhi, India"
 
-            # Use cached functions
+            # cache_resource means G is returned by reference - no pickle on rerun
             G = cached_network(full_place_name)
             pois = cached_pois(full_place_name, amenity)
 
             if pois.empty:
-                st.error(f"❌ No '{amenity}' found.")
+                st.error(f"No '{amenity}' found in {district}.")
                 st.stop()
 
             target_nodes = ox.distance.nearest_nodes(G, pois.geometry.x, pois.geometry.y)
-            distances = nx.multi_source_dijkstra_path_length(G, set(target_nodes), weight='time')
+            distances = nx.multi_source_dijkstra_path_length(
+                G, set(target_nodes), weight="time"
+            )
 
             avg_time = sum(distances.values()) / len(distances)
-            percent_served = (sum(1 for t in distances.values() if t <= 15) / len(distances)) * 100
+            percent_served = (
+                sum(1 for t in distances.values() if t <= 15) / len(distances)
+            ) * 100
 
-            display_df = pois[['name', 'geometry']].copy()
-            display_df['Latitude'] = display_df.geometry.y
-            display_df['Longitude'] = display_df.geometry.x
-            display_df = display_df.drop(columns=['geometry']).fillna("Unnamed Location")
+            display_df = pois[["name", "geometry"]].copy()
+            display_df["Latitude"] = display_df.geometry.y
+            display_df["Longitude"] = display_df.geometry.x
+            display_df = display_df.drop(columns=["geometry"]).fillna("Unnamed Location")
 
-            
+            # Pre-compute and subsample heatmap data to max 2000 points.
+            # This is the single biggest lag fix - cuts map transfer by ~95%.
             heatmap_data = [
-                [G.nodes[n]['y'], G.nodes[n]['x'], max(0, 15 - t)]
-                for n, t in distances.items() if t <= 20
+                [G.nodes[n]["y"], G.nodes[n]["x"], max(0, 15 - t)]
+                for n, t in distances.items()
+                if t <= 20
             ]
             if len(heatmap_data) > 2000:
                 heatmap_data = random.sample(heatmap_data, 2000)
 
-            # Pre-compute histogram bins so we never send raw node distances to the browser
+            # Pre-bin walk times into a histogram - avoids sending 50k raw rows to browser
             vals = list(distances.values())
             counts, bins = np.histogram(vals, bins=30, range=(0, 30))
-            hist_df = pd.DataFrame({
-                'Minutes': bins[:-1].round(1),
-                'Nodes': counts
-            })
+            hist_df = pd.DataFrame({"Minutes": bins[:-1].round(1), "Nodes": counts})
 
             map_center = [pois.geometry.y.iloc[0], pois.geometry.x.iloc[0]]
 
@@ -120,17 +131,18 @@ with tab1:
             )
             st.session_state.messages[0] = {
                 "role": "system",
-                "content": f"You are a Delhi expert. Context: {audit_summary}"
+                "content": f"You are a Delhi expert. Context: {audit_summary}",
             }
 
-            
+            # Store ONLY lightweight display-ready data - G and pois stay in the cache.
+            # Keeping large objects out of session_state prevents costly pickle on every rerun.
             st.session_state.audit_results = {
                 "avg_time": avg_time,
                 "percent_served": percent_served,
                 "display_df": display_df,
-                "heatmap_data": heatmap_data,   # pre-computed, subsampled
-                "hist_df": hist_df,              # pre-binned histogram
-                "map_center": map_center,        # two floats only
+                "heatmap_data": heatmap_data,
+                "hist_df": hist_df,
+                "map_center": map_center,
                 "district": district,
                 "amenity": amenity,
             }
@@ -139,10 +151,18 @@ with tab1:
                 "District": district,
                 "Service": amenity.title(),
                 "Avg Walk (Min)": round(avg_time, 2),
-                "15-Min Access %": round(percent_served, 2)
+                "15-Min Access %": round(percent_served, 2),
             })
 
-    # Display Persistent Results
+    # FIX 1: Guard against stale session state from before the map_center key existed.
+    # Any audit_results dict missing this key is from an old schema - reset it.
+    if (
+        st.session_state.audit_results is not None
+        and "map_center" not in st.session_state.audit_results
+    ):
+        st.session_state.audit_results = None
+        st.warning("Audit data was from an older session - please re-run the audit.")
+
     if st.session_state.audit_results:
         res = st.session_state.audit_results
 
@@ -150,36 +170,36 @@ with tab1:
         col1.metric("Avg. Walk Time", f"{res['avg_time']:.1f} mins")
         col2.metric("15-Min Access %", f"{res['percent_served']:.1f}%")
 
-        # AI Insight button 
-        if st.button("✨ Get AI Insight"):
+        if st.button("Get AI Insight"):
             with st.spinner("Generating insight..."):
                 insight = get_ai_insight(
-                    res['district'], res['amenity'],
-                    res['avg_time'], res['percent_served']
+                    res["district"], res["amenity"],
+                    res["avg_time"], res["percent_served"],
                 )
                 st.info(insight)
 
-        # Heatmap 
-        m = folium.Map(location=res['map_center'], zoom_start=14)
-        HeatMap(res['heatmap_data']).add_to(m)
+        # Heatmap with pre-subsampled data; returned_objects=[] stops ping-pong transfer
+        m = folium.Map(location=res["map_center"], zoom_start=14)
+        HeatMap(res["heatmap_data"]).add_to(m)
         st_folium(m, width=1100, height=500, returned_objects=[], key="audit_map")
 
-        # Histogram 
+        # Histogram chart - pre-binned, never raw node distances
         st.subheader("Walk Time Distribution")
-        st.bar_chart(res['hist_df'].set_index('Minutes'), color="#2ecc71")
+        st.bar_chart(res["hist_df"].set_index("Minutes"), color="#2ecc71")
 
-        st.dataframe(res['display_df'], use_container_width=True)
+        # FIX 3: use_container_width deprecated - replaced with width='stretch'
+        st.dataframe(res["display_df"], width="stretch")
     else:
-        st.info("👈 Run an Audit to see spatial data.")
+        st.info("Run an Audit from the sidebar to see spatial data.")
 
 with tab2:
     if st.session_state.comparison_data:
         df_comp = pd.DataFrame(st.session_state.comparison_data).drop_duplicates()
         st.table(df_comp)
-        st.bar_chart(df_comp.set_index('District')['15-Min Access %'])
+        st.bar_chart(df_comp.set_index("District")["15-Min Access %"])
 
 with tab3:
-    st.header("💬 Urban Planning Assistant")
+    st.header("Urban Planning Assistant")
     for message in st.session_state.messages:
         if message["role"] != "system":
             with st.chat_message(message["role"]):
@@ -194,7 +214,17 @@ with tab3:
             stream = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=st.session_state.messages,
-                stream=True
+                stream=True,
             )
-            full_response = st.write_stream(stream)
+            # FIX 2: Manually collect stream chunks into a plain string.
+            # st.write_stream() can return a non-string object - storing that in
+            # messages causes Groq to throw a 400 BadRequestError on the next turn.
+            full_response = ""
+            placeholder = st.empty()
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content or ""
+                full_response += delta
+                placeholder.markdown(full_response + " ")
+            placeholder.markdown(full_response)
+
         st.session_state.messages.append({"role": "assistant", "content": full_response})
