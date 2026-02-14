@@ -61,9 +61,7 @@ def get_ai_insight(dist, amen, avg_t, access_p):
 
 # 2. Sidebar
 st.sidebar.header("Audit Settings")
-delhi_districts = [
-    "Central Delhi", "East Delhi", "New Delhi",
-    "North Delhi", "South Delhi", "West Delhi",
+delhi_districts = ["Central Delhi","East Delhi","New Delhi","North Delhi","North East Delhi","North West Delhi","Shahdara","South Delhi","South East Delhi","South West Delhi","West Delhi","Old Delhi","Central North Delhi","Outer North Delhi",
 ]
 
 district = st.sidebar.selectbox("Select Delhi District", delhi_districts)
