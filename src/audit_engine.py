@@ -1,11 +1,11 @@
 import osmnx as ox
 import os
 import streamlit as st
-import pandas as pd # <--- Add this!
-import geopandas as gpd # <--- Add this for the POI loading logic
-from shapely import wkt # Required for the POI wkt.loads line
+import pandas as pd
+import geopandas as gpd 
+from shapely import wkt 
 
-# Create data folders if they don't exist
+
 os.makedirs("data/networks", exist_ok=True)
 os.makedirs("data/pois", exist_ok=True)
 
@@ -17,7 +17,7 @@ def get_city_network(place_name):
     
     if os.path.exists(filepath):
         G = ox.load_graphml(filepath)
-        # Type casting: ensure time is float
+        # Type casting to float
         for u, v, k, data in G.edges(data=True, keys=True):
             if 'time' in data:
                 data['time'] = float(data['time'])
@@ -29,14 +29,14 @@ def get_city_network(place_name):
         # STRATEGY 1: Official Boundary
         G = ox.graph_from_place(place_name, network_type='walk')
     except Exception:
-        # STRATEGY 2: Radial Buffer (Fixes Central North Delhi / Paharganj)
+        # STRATEGY 2: Radial Buffer 
         print(f"⚠️ Polygon not found. Switching to 3km radial buffer for {place_name}...")
         G = ox.graph_from_address(place_name, dist=3000, network_type='walk')
 
     # Standardize and project
     G = ox.project_graph(G)
     
-    # Calculate travel time (75 m/min)
+    # Calculate time (speed 75 m/min)
     speed_mpm = 75 
     for u, v, k, data in G.edges(data=True, keys=True):
         data['time'] = float(data['length']) / speed_mpm
@@ -101,3 +101,6 @@ def get_pois(place_name, category):
         return pois_points
 
     return pois
+
+
+

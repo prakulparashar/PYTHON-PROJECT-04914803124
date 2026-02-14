@@ -15,12 +15,12 @@ st.set_page_config(page_title="Delhi 15-Min Audit", layout="wide")
 st.title("Delhi 15-Minute City Dashboard")
 
 # --- CACHING WRAPPERS ---
-# cache_resource: stores the NetworkX graph as a single reference (no pickle round-trip)
+# cache_resource: stores the NetworkX graph as a single reference 
 @st.cache_resource(show_spinner=False)
 def cached_network(place):
     return get_city_network(place)
 
-# cache_data: fine for GeoDataFrames (serializes well)
+# cache_data: fine for GeoDataFrames 
 @st.cache_data(show_spinner=False)
 def cached_pois(place, amenity):
     return get_pois(place, amenity)
@@ -121,7 +121,6 @@ with tab1:
 
             map_center = [pois.geometry.y.iloc[0], pois.geometry.x.iloc[0]]
 
-            # Extract POI coordinates as plain Python lists (lightweight, no GeoDataFrame)
             poi_coords = list(zip(
                 pois.geometry.y.tolist(),
                 pois.geometry.x.tolist(),
@@ -137,7 +136,6 @@ with tab1:
                 "content": f"You are a Delhi expert. Context: {audit_summary}",
             }
 
-            # Store ONLY lightweight display-ready data - G and pois stay in the cache
             st.session_state.audit_results = {
                 "avg_time": avg_time,
                 "percent_served": percent_served,
@@ -157,7 +155,6 @@ with tab1:
                 "15-Min Access %": round(percent_served, 2),
             })
 
-    # Guard against stale session state missing newer keys
     if (
         st.session_state.audit_results is not None
         and "map_center" not in st.session_state.audit_results
@@ -180,7 +177,7 @@ with tab1:
                 )
                 st.info(insight)
 
-        # Build map: heatmap layer + blue dot for each amenity location
+        # Build map: heatmap layer + blue dot 
         m = folium.Map(location=res["map_center"], zoom_start=14)
         HeatMap(res["heatmap_data"]).add_to(m)
 
@@ -188,9 +185,9 @@ with tab1:
             folium.CircleMarker(
                 location=[lat, lon],
                 radius=6,
-                color="#1565C0",       # dark blue border
+                color="#1565C0",       
                 fill=True,
-                fill_color="#1E88E5",  # bright blue fill
+                fill_color="#1E88E5",  
                 fill_opacity=0.85,
                 weight=1.5,
                 tooltip=name,
