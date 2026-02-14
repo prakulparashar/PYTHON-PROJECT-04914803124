@@ -78,17 +78,26 @@ def get_pois(place_name, category):
         pois = ox.features_from_address(place_name, tags, dist=3000)
         
     # 4. Clean and Save
-    if not pois.empty:
-        pois_points = pois[pois.geometry.type == 'Point'].copy()
+    pois_points = pois[pois.geometry.type == 'Point'].copy()
+    pois_polygons = pois[pois.geometry.type == 'Polygon'].copy()
+    
+    if not pois_polygons.empty:
+        pois_polygons = pois_polygons.copy()
+        pois_polygons['geometry'] = pois_polygons.geometry.centroid
+        
+        if pois_points.empty:
+            # No points at all — use polygon centroids directly
+            pois_points = pois_polygons
+        else:
+            # Combine both, reset index to avoid duplicate index issues
+            pois_points = gpd.GeoDataFrame(
+                pd.concat([pois_points, pois_polygons], ignore_index=True),
+                crs=pois.crs
+            )
 
-        pois_polygons = pois[pois.geometry.type == 'Polygon'].copy()
-        if not pois_polygons.empty:
-            pois_polygons['geometry'] = pois_polygons.geometry.centroid
-            pois_points = pd.concat([pois_points, pois_polygons])
-            
-        if not pois_points.empty:
-            pois_save = pois_points[['name', 'geometry']].fillna("Unnamed")
-            pois_save.to_csv(file_path, index=False)
-            return pois_points
-            
-    return pois 
+    if not pois_points.empty:
+        pois_save = pois_points[['name', 'geometry']].fillna("Unnamed")
+        pois_save.to_csv(file_path, index=False)
+        return pois_points
+
+    return pois
