@@ -9,6 +9,95 @@ from shapely import wkt
 os.makedirs("data/networks", exist_ok=True)
 os.makedirs("data/pois", exist_ok=True)
 
+
+
+# ─────────────────────────────────────────────────────────────
+# POPULATION-BASED FACILITY STANDARDS
+# Sources: WHO, MoHFW India, UDPFI Guidelines, Delhi Master Plan
+# ─────────────────────────────────────────────────────────────
+FACILITY_STANDARDS = {
+    "hospital": {
+        "label": "Hospitals / Clinics",
+        "per_population": 10_000,       # 1 per 10,000 residents (MoHFW)
+        "unit": "facility",
+    },
+    "school": {
+        "label": "Schools",
+        "per_population": 5_000,        # 1 per 5,000 residents (UDPFI)
+        "unit": "facility",
+    },
+    "supermarket": {
+        "label": "Grocery / Supermarkets",
+        "per_population": 3_000,        # 1 per 3,000 residents
+        "unit": "facility",
+    },
+    "pharmacy": {
+        "label": "Pharmacies",
+        "per_population": 4_000,        # 1 per 4,000 residents (Delhi MP)
+        "unit": "facility",
+    },
+}
+
+# Approximate 2024 populations for Delhi districts (Census + Delhi Economic Survey)
+DELHI_DISTRICT_POPULATIONS = {
+    "Central Delhi":       700_000,
+    "East Delhi":        1_800_000,
+    "New Delhi":           250_000,
+    "North Delhi":       1_000_000,
+    "North East Delhi":  2_300_000,
+    "North West Delhi":  3_600_000,
+    "South Delhi":       2_700_000,
+    "South East Delhi":  1_800_000,
+    "South West Delhi":  2_500_000,
+    "West Delhi":        2_500_000,
+    "Old Delhi":           600_000,
+    "Central North Delhi": 900_000,
+    "Outer North Delhi": 1_200_000,
+}
+
+
+def calculate_facility_requirements(district: str, amenity: str, actual_count: int) -> dict:
+    """
+    Given a district name, amenity type, and OSM-counted facilities,
+    returns a dict with required, actual, gap, and status.
+    """
+    population = DELHI_DISTRICT_POPULATIONS.get(district, 1_000_000)
+    standard = FACILITY_STANDARDS.get(amenity)
+
+    if not standard:
+        return None
+
+    required = max(1, round(population / standard["per_population"]))
+    gap = actual_count - required          # positive = surplus, negative = deficit
+
+    if gap >= 0:
+        status = "✅ Sufficient"
+        status_color = "green"
+    elif gap >= -required * 0.3:           # within 30% shortfall
+        status = "⚠️ Marginal"
+        status_color = "orange"
+    else:
+        status = "🔴 Deficit"
+        status_color = "red"
+
+    coverage_pct = round((actual_count / required) * 100, 1) if required > 0 else 0
+
+    return {
+        "district": district,
+        "amenity": standard["label"],
+        "population": population,
+        "required": required,
+        "actual": actual_count,
+        "gap": gap,
+        "coverage_pct": coverage_pct,
+        "status": status,
+        "status_color": status_color,
+        "per_population": standard["per_population"],
+    }
+
+
+
+
 @st.cache_data(show_spinner=False)
 def get_city_network(place_name):
     # Standardize filename

@@ -7,7 +7,7 @@ import networkx as nx
 import pandas as pd
 import numpy as np
 import random
-from src.audit_engine import get_city_network, get_pois
+from src.audit_engine import get_city_network, get_pois, calculate_facility_requirements
 from groq import Groq
 
 # 1. Page Configuration
@@ -15,12 +15,10 @@ st.set_page_config(page_title="Delhi 15-Min Audit", layout="wide")
 st.title("Delhi 15-Minute City Dashboard")
 
 # --- CACHING WRAPPERS ---
-# cache_resource: stores the NetworkX graph as a single reference 
 @st.cache_resource(show_spinner=False)
 def cached_network(place):
     return get_city_network(place)
 
-# cache_data: fine for GeoDataFrames 
 @st.cache_data(show_spinner=False)
 def cached_pois(place, amenity):
     return get_pois(place, amenity)
@@ -59,9 +57,102 @@ def get_ai_insight(dist, amen, avg_t, access_p):
     return completion.choices[0].message.content
 
 
+def render_requirements_panel(req: dict):
+    """Renders the population-based requirements card below the metrics."""
+    population = req["population"]
+    required = req["required"]
+    actual = req["actual"]
+    gap = req["gap"]
+    coverage_pct = req["coverage_pct"]
+    status = req["status"]
+    per_pop = req["per_population"]
+
+    st.markdown("---")
+    st.subheader("📊 Population-Based Requirement Analysis")
+
+    # Top info row
+    col_a, col_b, col_c, col_d = st.columns(4)
+    col_a.metric(
+        "District Population",
+        f"{population:,.0f}",
+        help="Source: Delhi Economic Survey 2024 estimates"
+    )
+    col_b.metric(
+        "Required Facilities",
+        required,
+        help=f"Standard: 1 per {per_pop:,} residents (MoHFW / UDPFI Guidelines)"
+    )
+    col_c.metric(
+        "Mapped by OSM",
+        actual,
+        delta=f"{'+' if gap >= 0 else ''}{gap} vs required",
+        delta_color="normal" if gap >= 0 else "inverse",
+    )
+    col_d.metric(
+        "Coverage",
+        f"{coverage_pct}%",
+        help="(Actual ÷ Required) × 100"
+    )
+
+    # Progress bar
+    bar_pct = min(coverage_pct / 100, 1.0)
+    bar_color = "#2ecc71" if gap >= 0 else ("#f39c12" if gap >= -required * 0.3 else "#e74c3c")
+
+    st.markdown(
+        f"""
+        <div style="margin: 8px 0 4px 0; font-size: 13px; color: #555;">
+            Facility Coverage Progress ({coverage_pct}%)
+        </div>
+        <div style="background:#e0e0e0; border-radius:8px; height:18px; width:100%;">
+            <div style="background:{bar_color}; width:{bar_pct*100:.1f}%;
+                        height:18px; border-radius:8px; transition: width 0.5s;">
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Status banner
+    banner_bg = {"green": "#d4edda", "orange": "#fff3cd", "red": "#f8d7da"}
+    banner_border = {"green": "#28a745", "orange": "#ffc107", "red": "#dc3545"}
+    color_key = req["status_color"]
+
+    if gap < 0:
+        gap_msg = (
+            f"This district needs <b>{abs(gap)} more {req['amenity'].lower()}</b> "
+            f"to meet the standard of 1 per {per_pop:,} residents."
+        )
+    else:
+        gap_msg = (
+            f"This district has a <b>surplus of {gap} {req['amenity'].lower()}</b> "
+            f"relative to its population. Distribution equity may still vary by neighbourhood."
+        )
+
+    st.markdown(
+        f"""
+        <div style="margin-top:14px; padding:12px 16px; border-radius:8px;
+                    background:{banner_bg[color_key]}; border-left: 5px solid {banner_border[color_key]};">
+            <b>{status}</b> — {gap_msg}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Methodology note
+    st.caption(
+        f"💡 Standards based on MoHFW India, UDPFI Guidelines & Delhi Master Plan 2041. "
+        f"OSM data may undercount private/informal facilities. "
+        f"Population: Delhi Economic Survey 2024 district estimates."
+    )
+
+
 # 2. Sidebar
 st.sidebar.header("Audit Settings")
-delhi_districts = ["Central Delhi","East Delhi","New Delhi","North Delhi","North East Delhi","North West Delhi","Shahdara","South Delhi","South East Delhi","South West Delhi","West Delhi","Old Delhi","Central North Delhi","Outer North Delhi",
+delhi_districts = [
+    "Central Delhi", "East Delhi", "New Delhi", "North Delhi",
+    "North East Delhi", "North West Delhi", "Shahdara", "South Delhi",
+    "South East Delhi", "South West Delhi", "West Delhi", "Old Delhi",
+    "Central North Delhi", "Outer North Delhi",
 ]
 
 district = st.sidebar.selectbox("Select Delhi District", delhi_districts)
@@ -105,7 +196,6 @@ with tab1:
             display_df["Longitude"] = display_df.geometry.x
             display_df = display_df.drop(columns=["geometry"]).fillna("Unnamed Location")
 
-            # Pre-compute and subsample heatmap data to max 2000 points
             heatmap_data = [
                 [G.nodes[n]["y"], G.nodes[n]["x"], max(0, 15 - t)]
                 for n, t in distances.items()
@@ -114,22 +204,25 @@ with tab1:
             if len(heatmap_data) > 2000:
                 heatmap_data = random.sample(heatmap_data, 2000)
 
-            # Pre-bin walk times into a histogram
             vals = list(distances.values())
             counts, bins = np.histogram(vals, bins=30, range=(0, 30))
             hist_df = pd.DataFrame({"Minutes": bins[:-1].round(1), "Nodes": counts})
 
             map_center = [pois.geometry.y.iloc[0], pois.geometry.x.iloc[0]]
-
             poi_coords = list(zip(
                 pois.geometry.y.tolist(),
                 pois.geometry.x.tolist(),
                 pois["name"].fillna("Unnamed Location").tolist(),
             ))
 
+            # ── Population requirement calculation ──────────────────
+            req_data = calculate_facility_requirements(district, amenity, len(pois))
+            # ────────────────────────────────────────────────────────
+
             audit_summary = (
                 f"{district} {amenity}: Avg walk {avg_time:.1f}m, "
-                f"15-min access {percent_served:.1f}%."
+                f"15-min access {percent_served:.1f}%. "
+                f"Required: {req_data['required']}, Found: {req_data['actual']}."
             )
             st.session_state.messages[0] = {
                 "role": "system",
@@ -146,6 +239,7 @@ with tab1:
                 "poi_coords": poi_coords,
                 "district": district,
                 "amenity": amenity,
+                "req_data": req_data,               # ← NEW
             }
 
             st.session_state.comparison_data.append({
@@ -153,6 +247,9 @@ with tab1:
                 "Service": amenity.title(),
                 "Avg Walk (Min)": round(avg_time, 2),
                 "15-Min Access %": round(percent_served, 2),
+                "Required": req_data["required"],   # ← NEW
+                "Actual (OSM)": req_data["actual"],       # ← NEW
+                "Gap": req_data["gap"],              # ← NEW
             })
 
     if (
@@ -165,6 +262,7 @@ with tab1:
     if st.session_state.audit_results:
         res = st.session_state.audit_results
 
+        # ── 15-min metrics ──────────────────────────────────────────
         col1, col2 = st.columns(2)
         col1.metric("Avg. Walk Time", f"{res['avg_time']:.1f} mins")
         col2.metric("15-Min Access %", f"{res['percent_served']:.1f}%")
@@ -177,7 +275,13 @@ with tab1:
                 )
                 st.info(insight)
 
-        # Build map: heatmap layer + blue dot 
+        # ── Population requirements panel ───────────────────────────
+        if res.get("req_data"):
+            render_requirements_panel(res["req_data"])
+
+        st.markdown("---")
+
+        # ── Map ─────────────────────────────────────────────────────
         m = folium.Map(location=res["map_center"], zoom_start=14)
         HeatMap(res["heatmap_data"]).add_to(m)
 
@@ -185,9 +289,9 @@ with tab1:
             folium.CircleMarker(
                 location=[lat, lon],
                 radius=6,
-                color="#1565C0",       
+                color="#1565C0",
                 fill=True,
-                fill_color="#1E88E5",  
+                fill_color="#1E88E5",
                 fill_opacity=0.85,
                 weight=1.5,
                 tooltip=name,
