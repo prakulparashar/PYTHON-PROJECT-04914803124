@@ -80,6 +80,12 @@ def get_pois(place_name, category):
     # 4. Clean and Save
     if not pois.empty:
         pois_points = pois[pois.geometry.type == 'Point'].copy()
+
+        pois_polygons = pois[pois.geometry.type == 'Polygon'].copy()
+        if not pois_polygons.empty:
+            pois_polygons['geometry'] = pois_polygons.geometry.centroid
+            pois_points = pd.concat([pois_points, pois_polygons])
+            
         if not pois_points.empty:
             pois_save = pois_points[['name', 'geometry']].fillna("Unnamed")
             pois_save.to_csv(file_path, index=False)
