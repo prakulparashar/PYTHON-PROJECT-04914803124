@@ -138,7 +138,7 @@ def render_requirements_panel(req: dict):
         unsafe_allow_html=True,
     )
 
-    # Methodology note
+    # Methodology 
     st.caption(
         f"💡 Standards based on MoHFW India, UDPFI Guidelines & Delhi Master Plan 2041. "
         f"OSM data may undercount private/informal facilities. "
@@ -150,10 +150,8 @@ def render_requirements_panel(req: dict):
 st.sidebar.header("Audit Settings")
 delhi_districts = [
     "Central Delhi", "East Delhi", "New Delhi", "North Delhi",
-    "North East Delhi", "North West Delhi", "Shahdara", "South Delhi",
-    "South East Delhi", "South West Delhi", "West Delhi", "Old Delhi",
-    "Central North Delhi", "Outer North Delhi",
-]
+    "North East Delhi", "North West Delhi", "South Delhi",
+    "South West Delhi", "West Delhi",]
 
 district = st.sidebar.selectbox("Select Delhi District", delhi_districts)
 amenity = st.sidebar.selectbox(
@@ -239,7 +237,7 @@ with tab1:
                 "poi_coords": poi_coords,
                 "district": district,
                 "amenity": amenity,
-                "req_data": req_data,               # ← NEW
+                "req_data": req_data,               
             }
 
             st.session_state.comparison_data.append({
@@ -247,9 +245,9 @@ with tab1:
                 "Service": amenity.title(),
                 "Avg Walk (Min)": round(avg_time, 2),
                 "15-Min Access %": round(percent_served, 2),
-                "Required": req_data["required"],   # ← NEW
-                "Actual (OSM)": req_data["actual"],       # ← NEW
-                "Gap": req_data["gap"],              # ← NEW
+                "Required": req_data["required"],   
+                "Actual (OSM)": req_data["actual"],       
+                "Gap": req_data["gap"],             
             })
 
     if (

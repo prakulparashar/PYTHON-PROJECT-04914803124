@@ -38,21 +38,17 @@ FACILITY_STANDARDS = {
     },
 }
 
-# Approximate 2024 populations for Delhi districts (Census + Delhi Economic Survey)
+
 DELHI_DISTRICT_POPULATIONS = {
-    "Central Delhi":       700_000,
-    "East Delhi":        1_800_000,
-    "New Delhi":           250_000,
-    "North Delhi":       1_000_000,
-    "North East Delhi":  2_300_000,
-    "North West Delhi":  3_600_000,
-    "South Delhi":       2_700_000,
-    "South East Delhi":  1_800_000,
-    "South West Delhi":  2_500_000,
-    "West Delhi":        2_500_000,
-    "Old Delhi":           600_000,
-    "Central North Delhi": 900_000,
-    "Outer North Delhi": 1_200_000,
+    "Central Delhi":      759_000,
+    "East Delhi":        2_227_000,
+    "New Delhi":           185_000,
+    "North Delhi":       1_157_000,
+    "North East Delhi":  2_921_000,
+    "North West Delhi":  4_762_000,
+    "South Delhi":       3_559_000,
+    "South West Delhi":  2_988_000,
+    "West Delhi":        3_314_000,
 }
 
 
@@ -106,7 +102,7 @@ def get_city_network(place_name):
     
     if os.path.exists(filepath):
         G = ox.load_graphml(filepath)
-        # Type casting to float
+        # Type casting to float, by default its string, so cant perform maths on it
         for u, v, k, data in G.edges(data=True, keys=True):
             if 'time' in data:
                 data['time'] = float(data['time'])
@@ -122,10 +118,10 @@ def get_city_network(place_name):
         print(f"⚠️ Polygon not found. Switching to 3km radial buffer for {place_name}...")
         G = ox.graph_from_address(place_name, dist=3000, network_type='walk')
 
-    # Standardize and project
+    # Convert from UTM to length in metres
     G = ox.project_graph(G)
     
-    # Calculate time (speed 75 m/min)
+    # Calculate time for each edge in the graph, making it a weighted graph
     speed_mpm = 75 
     for u, v, k, data in G.edges(data=True, keys=True):
         data['time'] = float(data['length']) / speed_mpm
@@ -157,7 +153,7 @@ def get_pois(place_name, category):
     else:
         tags = {'amenity': category}
 
-    # 3. Fetch Data with Fallback
+    # 3. Fetch Data 
     try:
         # Strategy A: Search within official boundary
         pois = ox.features_from_place(place_name, tags)
@@ -172,7 +168,7 @@ def get_pois(place_name, category):
     
     if not pois_polygons.empty:
         pois_polygons = pois_polygons.copy()
-        pois_polygons['geometry'] = pois_polygons.geometry.centroid
+        pois_polygons['geometry'] = pois_polygons.geometry.centroid # Some hospitals are returned as Polygons, So its centroid point is taken
         
         if pois_points.empty:
             # No points at all — use polygon centroids directly
@@ -180,7 +176,7 @@ def get_pois(place_name, category):
         else:
             # Combine both, reset index to avoid duplicate index issues
             pois_points = gpd.GeoDataFrame(
-                pd.concat([pois_points, pois_polygons], ignore_index=True),
+                pd.concat([pois_points, pois_polygons], ignore_index=True), #concat the points DF and centroid DF
                 crs=pois.crs
             )
 
